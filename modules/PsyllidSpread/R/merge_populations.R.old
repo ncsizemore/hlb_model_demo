@@ -1,0 +1,5 @@
+.merge_populations <- function(uninfected, infected, params){
+  
+  
+  
+}

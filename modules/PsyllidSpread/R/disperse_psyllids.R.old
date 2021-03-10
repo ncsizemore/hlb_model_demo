@@ -1,0 +1,181 @@
+.disperse <- function(uninfected, weight_matrix, region, wind_dispersal_prob, nbrs, neighbor_mat, params, method = "all_cells_fft"){
+  
+  if (method == "all_cells_fft"){
+    #browser()
+    
+    dispersers <- (1 - wind_dispersal_prob) * (1 - params$.pr_psyllid_stay$as.RasterLayer()) * (uninfected$as.RasterLayer(band = 20) * (params$land$as.RasterLayer() + 1 - params$citrus))
+    um <- raster::as.matrix(dispersers)
+    um[is.na(um)] <- 0
+    
+    # fft returns some negative values
+    cum <- abs(filter2(um, weight_matrix, boundary = 0))
+    dispersers[which(!is.na(dispersers[]))] <- t(cum)[which(!is.na(dispersers[]))]
+    dispersers <- params$landls2$as.RasterLayer() * dispersers
+    
+    uninfected$rasterbands[[20]] <- params$.pr_psyllid_stay$rasterbands[[1]] * uninfected$rasterbands[[20]] + raster::as.matrix(dispersers)
+    uninfected$rasterbands[[20]] <- params$.pr_psyllid_survival$rasterbands[[1]]*uninfected$rasterbands[[20]]
+    uninfected$rasterbands[[20]] <- ifelse(!is.na(params$landls2$rasterbands[[1]]) & is.na(uninfected$rasterbands[[20]]), 0, uninfected$rasterbands[[20]])
+    
+    uninfected$rasterbands[[20]][uninfected$rasterbands[[20]] < 1] <- 0
+    
+  }
+  #########################
+  # psyllids can land on any cell. probability of survival is low on invalid cells, and they can't lay eggs on invalid cells
+  if (method == "all_cells"){
+    
+    dispersers <- velox(uninfected$as.RasterLayer(band = 20))
+    dispersers$rasterbands[[1]][is.na(dispersers$rasterbands[[1]])] <- 0
+   # stop()
+    dispersers$rasterbands[[1]] <- (1 - raster::as.matrix(wind_dispersal_prob) - params$.pr_psyllid_stay$rasterbands[[1]]) * dispersers$rasterbands[[1]]
+    dispersers$sumFocal(weights = weight_matrix, bands = 1)
+    uninfected$rasterbands[[20]] <- params$.pr_psyllid_stay$rasterbands[[1]] * uninfected$rasterbands[[20]] + dispersers$rasterbands[[1]]
+    uninfected$rasterbands[[20]] <- params$.pr_psyllid_survival$rasterbands[[1]]*uninfected$rasterbands[[20]]
+    uninfected$rasterbands[[20]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(uninfected$rasterbands[[20]]), 0, uninfected$rasterbands[[20]])
+    
+  }
+  
+  if (method == "crop"){
+  
+  # first compute regular focal sum of incoming psyllids
+  r <- uninfected$as.RasterLayer(band = 20)
+  r[is.na(r)] <- 0
+  cells <- which(r[] > 0)
+  
+  if (length(cells) > 0){
+    ext <- extentFromCells(r, cells)
+    all_cells <- cellsFromExtent(r, c(.95*ext[1], 1.05*ext[2], .95*ext[3], 1.05*ext[4]))
+    cropped <- velox(crop(r, c(.95*ext[1], 1.05*ext[2], .95*ext[3], 1.05*ext[4])))
+    cropped$rasterbands[[1]][is.na(cropped$rasterbands[[1]])] <- 0
+    cropped$sumFocal(weights = weight_matrix, bands = 1)
+    r[all_cells] <- cropped$as.RasterLayer()[]
+  }
+  tmp <- velox(r)
+  tmp$rasterbands[[1]][is.na(params$.landls2$rasterbands[[1]])] <- NA
+  
+  # then the idea is on the invalid cells, to divide by the number of neighbors and
+  # then take a focal sum to look at the the number of psyllids that should be received 
+  # by each cell from its invalid neighbors when we restribute them back
+  landls3 <- params$.landls2$copy()
+  landls3$rasterbands[[1]] <- ifelse(landls3$rasterbands[[1]] == 0, 1, 
+                                     ifelse(landls3$rasterbands[[1]] == 1, 0, landls3$rasterbands[[1]]))
+  tmp2 <- tmp$copy()
+  tmp2$rasterbands[[1]] <- tmp2$rasterbands[[1]]*landls3$rasterbands[[1]]
+  tmp2$rasterbands[[1]][is.na(tmp2$rasterbands[[1]])] <- 0
+  tmp2$rasterbands[[1]] <- ifelse(nbrs$rasterbands[[1]] == 0, 0, tmp2$rasterbands[[1]]/nbrs$rasterbands[[1]])
+  r <- tmp2$as.RasterLayer()
+  r[is.na(r)] <- 0
+  cells <- which(r[] > 0)
+  
+  if (length(cells) > 0){
+    ext <- extentFromCells(r, cells)
+    all_cells <- cellsFromExtent(r, c(.95*ext[1], 1.05*ext[2], .95*ext[3], 1.05*ext[4]))
+    cropped <- velox(crop(r, c(.95*ext[1], 1.05*ext[2], .95*ext[3], 1.05*ext[4])))
+    cropped$rasterbands[[1]][is.na(cropped$rasterbands[[1]])] <- 0
+    cropped$sumFocal(weights = neighbor_mat, bands = 1)
+    r[all_cells] <- cropped$as.RasterLayer()[]
+  }
+  
+  tmp2 <- velox(r)
+  tmp2$rasterbands[[1]][is.na(params$.landls2$rasterbands[[1]])] <- NA
+  
+  # then we can zero out the original psyllid counts on the invalid cells and add those psyllids back to the valid cells
+  tmp$rasterbands[[1]] <- tmp$rasterbands[[1]]*params$.landls2$rasterbands[[1]] + tmp2$rasterbands[[1]]*params$.landls2$rasterbands[[1]]
+  
+  
+  uninfected$rasterbands[[20]] <- params$.pr_psyllid_survival$rasterbands[[1]]*tmp$rasterbands[[1]]
+  uninfected$rasterbands[[20]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(uninfected$rasterbands[[20]]), 0, uninfected$rasterbands[[20]])
+  }
+  
+  if (method == "full"){
+    # first compute regular focal sum of incoming psyllids
+    tmp <- velox(uninfected$as.RasterLayer(band = 20))
+    tmp$rasterbands[[1]][is.na(tmp$rasterbands[[1]])] <- 0
+    tmp$sumFocal(weights = weight_matrix, bands = 1)
+    tmp$rasterbands[[1]][is.na(params$.landls2$rasterbands[[1]])] <- NA
+
+    # then the idea is on the invalid cells, to divide by the number of neighbors and
+    # then take a focal sum to look at the the number of psyllids that should be received 
+    # by each cell from its invalid neighbors when we restribute them back
+    landls3 <- params$.landls2$copy()
+    landls3$rasterbands[[1]] <- ifelse(landls3$rasterbands[[1]] == 0, 1, 
+                                       ifelse(landls3$rasterbands[[1]] == 1, 0, landls3$rasterbands[[1]]))
+    tmp2 <- tmp$copy()
+    tmp2$rasterbands[[1]] <- tmp2$rasterbands[[1]]*landls3$rasterbands[[1]]
+    tmp2$rasterbands[[1]][is.na(tmp2$rasterbands[[1]])] <- 0
+    tmp2$rasterbands[[1]] <- ifelse(nbrs$rasterbands[[1]] == 0, 0, tmp2$rasterbands[[1]]/nbrs$rasterbands[[1]])
+    tmp2$sumFocal(weights = neighbor_mat, bands = 1)
+    tmp2$rasterbands[[1]][is.na(params$.landls2$rasterbands[[1]])] <- NA
+    
+    # then we can zero out the original psyllid counts on the invalid cells and add those psyllids back to the valid cells
+    tmp$rasterbands[[1]] <- tmp$rasterbands[[1]]*params$.landls2$rasterbands[[1]] + tmp2$rasterbands[[1]]*params$.landls2$rasterbands[[1]]
+    
+    
+    uninfected$rasterbands[[20]] <- params$.pr_psyllid_survival$rasterbands[[1]]*tmp$rasterbands[[1]]
+    uninfected$rasterbands[[20]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(uninfected$rasterbands[[20]]), 0, uninfected$rasterbands[[20]])
+    
+  }
+  
+  if (method == "full_drop"){
+    # first compute regular focal sum of incoming psyllids
+    tmp <- velox(uninfected$as.RasterLayer(band = 20))
+    tmp$rasterbands[[1]][is.na(tmp$rasterbands[[1]])] <- 0
+    tmp$sumFocal(weights = weight_matrix, bands = 1)
+    tmp$rasterbands[[1]][is.na(params$.landls2$rasterbands[[1]])] <- NA
+    
+    # then the idea is on the invalid cells, to divide by the number of neighbors and
+    # then take a focal sum to look at the the number of psyllids that should be received 
+    # by each cell from its invalid neighbors when we restribute them back
+    # landls3 <- params$.landls2$copy()
+    # landls3$rasterbands[[1]] <- ifelse(landls3$rasterbands[[1]] == 0, 1, 
+    #                                    ifelse(landls3$rasterbands[[1]] == 1, 0, landls3$rasterbands[[1]]))
+    # tmp2 <- tmp$copy()
+    # tmp2$rasterbands[[1]] <- tmp2$rasterbands[[1]]*landls3$rasterbands[[1]]
+    # tmp2$rasterbands[[1]][is.na(tmp2$rasterbands[[1]])] <- 0
+    # tmp2$rasterbands[[1]] <- ifelse(nbrs$rasterbands[[1]] == 0, 0, tmp2$rasterbands[[1]]/nbrs$rasterbands[[1]])
+    # tmp2$sumFocal(weights = neighbor_mat, bands = 1)
+    # tmp2$rasterbands[[1]][is.na(params$.landls2$rasterbands[[1]])] <- NA
+    
+    # then we can zero out the original psyllid counts on the invalid cells and add those psyllids back to the valid cells
+    tmp$rasterbands[[1]] <- tmp$rasterbands[[1]]*params$.landls2$rasterbands[[1]] #+ tmp2$rasterbands[[1]]*params$.landls2$rasterbands[[1]]
+    
+    
+    uninfected$rasterbands[[20]] <- params$.pr_psyllid_survival$rasterbands[[1]]*tmp$rasterbands[[1]]
+    uninfected$rasterbands[[20]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(uninfected$rasterbands[[20]]), 0, uninfected$rasterbands[[20]])
+    
+  }
+  
+  if (method == "legacy_full"){
+    # first compute regular focal sum of incoming psyllids
+    # tmp <- params$.landls2$copy()
+    # tmp$rasterbands[[1]] <- uninfected$rasterbands[[20]]
+    tmp <- velox(uninfected$as.RasterLayer(band = 20))
+    tmp$sumFocal(weights = weight_matrix, bands = 1)
+    tmp$rasterbands[[1]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(tmp$rasterbands[[1]]), 0, tmp$rasterbands[[1]])
+    
+    # then the idea is on the invalid cells, to divide by the number of neighbors and
+    # then take a focal sum to look at the the number of psyllids that should be received 
+    # by each cell from its invalid neighbors when we restribute them back
+    landls3 <- params$.landls2$copy()
+    landls3$rasterbands[[1]] <- ifelse(landls3$rasterbands[[1]] == 0, 1, 
+                                       ifelse(landls3$rasterbands[[1]] == 1, 0, landls3$rasterbands[[1]]))
+    tmp2 <- tmp$copy()
+    tmp2$rasterbands[[1]] <- tmp2$rasterbands[[1]]*landls3$rasterbands[[1]]
+    tmp2$rasterbands[[1]] <- ifelse(nbrs$rasterbands[[1]] == 0, 0, tmp2$rasterbands[[1]]/nbrs$rasterbands[[1]])
+    tmp2$sumFocal(weights = neighbor_mat, bands = 1)
+    tmp2$rasterbands[[1]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(tmp2$rasterbands[[1]]), 0, tmp2$rasterbands[[1]])
+    
+    # we only want these numbers for the valid cells, ie how many should each valid cell receive
+    tmp2$rasterbands[[1]] <- tmp2$rasterbands[[1]]*params$.landls2$rasterbands[[1]]
+    tmp2$rasterbands[[1]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(tmp2$rasterbands[[1]]), 0, tmp2$rasterbands[[1]])
+    
+    # then we can zero out the original psyllid counts on the invalid cells and add those psyllids back to the valid cells
+    tmp$rasterbands[[1]] <- tmp$rasterbands[[1]]*params$.landls2$rasterbands[[1]] + tmp2$rasterbands[[1]]
+    
+    
+    uninfected$rasterbands[[20]] <- params$.pr_psyllid_survival$rasterbands[[1]]*tmp$rasterbands[[1]] #+ new_adults
+    uninfected$rasterbands[[20]] <- ifelse(!is.na(params$.landls2$rasterbands[[1]]) & is.na(uninfected$rasterbands[[20]]), 0, uninfected$rasterbands[[20]])
+    
+  }
+  
+  return(uninfected)
+}

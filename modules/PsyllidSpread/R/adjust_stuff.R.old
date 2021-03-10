@@ -1,0 +1,15 @@
+.adjust_stuff <- function(adults_cropped, new_adults_cropped, adults_cropped_perc_hres, citrus_hres_T, citrus_hres_flat_pr_T, citrus_hres_arrivals_T, pr_psyllid_stay_hres_T, testing){
+  
+  browser()
+  
+  # new_adults_cropped refers to new natural arrivals
+  
+
+  
+  
+  
+  
+  return(list(adults_hres, new_adults_hres, citrus_hres_flat_pr_T, citrus_hres_arrivals_T))
+}
+
+.adjust_stuff_tf <- tf$`function`(.adjust_stuff)
